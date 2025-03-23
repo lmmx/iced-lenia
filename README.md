@@ -2,4 +2,4 @@
 
 Particle Lenia simulation in Rust using iced
 
-![iced-lenia-002-opt](https://github.com/user-attachments/assets/3249d18f-ed8a-4ce4-9f92-96bf498b3d8f)
+![iced-lenia-003-opt](https://github.com/user-attachments/assets/7a3e9315-c82a-4e71-8832-29a9eeebe334)
