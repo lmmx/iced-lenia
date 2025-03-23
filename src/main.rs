@@ -1,11 +1,11 @@
 use iced::{
-    widget::canvas::{self, Canvas, Cursor, Frame, Geometry, Path},
-    executor, Application, Color, Command, Element, Length, Point, Rectangle, Settings, Subscription,
+    widget::canvas::{self, Canvas, Frame, Path},
+    mouse::Cursor,
+    executor, Application, Color, Command, Element, Length, Point, Settings, Subscription,
 };
 use ndarray::{Array2, Array1};
 use ndarray_rand::RandomExt;
-use rand::distributions::Normal;
-use itertools::izip;
+use ndarray_rand::rand_distr::Normal;
 
 const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = 800.0;
