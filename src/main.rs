@@ -14,22 +14,22 @@ use std::f32::consts::PI;
 const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = 800.0;
 
-const D: usize = 3; // 3D
-const N: usize = 900; 
+const D: usize = 3; // 3D positions (we ignore z for drawing)
+const N: usize = 900;
 const DT: f32 = 0.1;
 
-/// The usual Lenia "bell" function
+/// The typical Lenia "bell" function.
 fn bell(x: f32, m: f32, s: f32) -> f32 {
     (-((x - m) / s).powi(2)).exp()
 }
 
-/// A simple "repulse" function
+/// A simple repulsion function.
 fn repulse(x: f32) -> f32 {
     (1.0 - x).max(0.0).powi(2)
 }
 
-/// Numerically integrates bell(r, w) * surface_area_factor * r^(D-1),
-/// just like your Python code with jnp.trapezoid(...).
+/// Numerically integrates bell(r, w) * surface_area_factor * r^(D-1)
+/// over a radius interval, matching the Python reference normalization.
 fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
     let lower = (r - 4.0 * w).max(0.0);
     let upper = r + 4.0 * w;
@@ -37,29 +37,25 @@ fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
     let delta = (upper - lower) / (steps - 1) as f32;
 
     let dimension_factor = match d {
-        2 => 2.0 * PI, // circumference factor for 2D
-        3 => 4.0 * PI, // surface area factor for 3D
+        2 => 2.0 * PI, // for 2D (circumference)
+        3 => 4.0 * PI, // for 3D (surface area)
         _ => panic!("compute_kernel_sum: only d=2 or d=3 is implemented."),
     };
 
     let mut sum = 0.0;
     let mut last_val = None;
-
     for i in 0..steps {
         let dist = lower + (i as f32) * delta;
         let val = bell(dist, r, w) * dimension_factor * dist.powi((d - 1) as i32);
-
         if let Some(prev) = last_val {
-            // trapezoid area
-            sum += 0.5 * (val + prev) * delta;
+            sum += 0.5 * (val + prev) * delta; // trapezoidal integration
         }
         last_val = Some(val);
     }
-
     sum
 }
 
-/// Calculate the "energy" for a single point x_i vs. all others (X).
+/// Compute the energy for one particle at position `x_i` against all others in `X`.
 fn energy(
     X: &Array2<f32>,
     x_i: &Array1<f32>,
@@ -79,21 +75,20 @@ fn energy(
     let u = distances.mapv(|d| bell(d, r, w)).sum() / kernel_sum;
     let g = bell(u, m, s);
     let r_ener = distances.mapv(repulse).sum() * c_rep / 2.0;
-
     r_ener - g
 }
 
-/// Numeric gradient: calls energy(...) with x+epsilon, x-epsilon
+/// Compute a numerical gradient for `x_i` using finite differences.
 fn numerical_gradient(
-    X: &Array2<f32>, 
-    xi: &Array1<f32>, 
+    X: &Array2<f32>,
+    xi: &Array1<f32>,
     kernel_sum: f32,
     r: f32,
     w: f32,
     m: f32,
     s: f32,
     c_rep: f32,
-    h: f32
+    h: f32,
 ) -> Array1<f32> {
     let mut grad = Array1::zeros(D);
     for dim in 0..D {
@@ -110,11 +105,13 @@ fn numerical_gradient(
     grad
 }
 
+/// The main struct, including the particle positions and their energies.
 struct ParticleLenia {
     particles: Array2<f32>,
+    energies: Vec<f32>,
     cache: canvas::Cache,
 
-    // Lenia params:
+    // Lenia parameters
     r: f32,
     w: f32,
     m: f32,
@@ -136,20 +133,22 @@ impl Application for ParticleLenia {
     type Flags = ();
 
     fn new(_flags: Self::Flags) -> (Self, Command<Message>) {
+        // Lenia parameters; these may be tuned further.
         let r = 2.0;
         let w = 0.64;
         let m = 0.72;
         let s = 0.26;
         let c_rep = 1.0;
-
-        // Precompute kernel sum for dimension D
         let kernel_sum = compute_kernel_sum(D, r, w);
 
+        // Initialize particles randomly.
         let particles = Array2::random((N, D), Normal::new(0.0, 1.0).unwrap());
+        let energies = vec![0.0; N];
 
         (
             Self {
                 particles,
+                energies,
                 cache: canvas::Cache::new(),
                 r,
                 w,
@@ -189,12 +188,11 @@ impl Application for ParticleLenia {
 }
 
 impl ParticleLenia {
-    /// Only capture the data needed for parallel iteration as plain variables,
-    /// instead of referencing `&self` (which has a non-Sync cache).
+    /// Advance one simulation time step.
     fn step(&mut self) {
         let x_prev = self.particles.clone();
 
-        // Copy out scalar parameters. All these are `Copy` and don't need `&self`.
+        // Copy scalar parameters so the parallel closure doesn't capture &self.
         let kernel_sum = self.kernel_sum;
         let r = self.r;
         let w = self.w;
@@ -202,7 +200,7 @@ impl ParticleLenia {
         let s = self.s;
         let c_rep = self.c_rep;
 
-        // Compute new positions in parallel, WITHOUT capturing self.
+        // Update particle positions in parallel.
         let updates: Vec<Array1<f32>> = (0..N)
             .into_par_iter()
             .map(|i| {
@@ -214,6 +212,16 @@ impl ParticleLenia {
 
         let new_positions = Array2::from_shape_fn((N, D), |(i, j)| updates[i][j]);
         self.particles.assign(&new_positions);
+
+        // Compute energies for each particle in parallel.
+        let new_energies: Vec<f32> = (0..N)
+            .into_par_iter()
+            .map(|i| {
+                let xi = new_positions.row(i).to_owned();
+                energy(&new_positions, &xi, kernel_sum, r, w, m, s, c_rep)
+            })
+            .collect();
+        self.energies = new_energies;
     }
 }
 
@@ -228,29 +236,36 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
         bounds: Rectangle,
         _cursor: Cursor,
     ) -> Vec<Geometry> {
+        // Compute min and max energy values to normalize our color mapping.
+        let min_energy = self.energies.iter().cloned().fold(f32::INFINITY, f32::min);
+        let max_energy = self.energies.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+
         let geometry = self.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
+            // Draw background.
             frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
-    
-            for particle in self.particles.rows() {
+
+            // Render each particle with an energy-based color.
+            for (i, particle) in self.particles.rows().into_iter().enumerate() {
                 let x = (bounds.width / 2.0) + particle[0] * (bounds.width / 4.0);
                 let y = (bounds.height / 2.0) + particle[1] * (bounds.height / 4.0);
-    
-                // Convert z into [0..1] for a quick color factor
-                let z = particle[2];
-                let factor = (z * 0.1 + 0.5).clamp(0.0, 1.0);
-    
-                // Use factor to fade between two colors
-                let circle_color = Color::from_rgb(
-                    factor,         // R
-                    1.0 - factor,   // G
-                    0.7,            // B (fixed)
-                );
-    
+
+                // Normalize energy value to [0, 1].
+                let energy_value = self.energies[i];
+                let factor = if max_energy - min_energy > 0.0 {
+                    (energy_value - min_energy) / (max_energy - min_energy)
+                } else {
+                    0.5
+                };
+
+                // Map factor to a color. Here, low energy gives more green,
+                // and high energy gives more red (blue is fixed).
+                let circle_color = Color::from_rgb(factor, 1.0 - factor, 0.5);
+
                 let circle = Path::circle(Point::new(x, y), 2.0);
                 frame.fill(&circle, circle_color);
             }
         });
-    
+
         vec![geometry]
     }
 
