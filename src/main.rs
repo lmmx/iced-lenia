@@ -15,8 +15,19 @@ const WIDTH: f32 = 800.0;
 const HEIGHT: f32 = 800.0;
 
 const D: usize = 3; // 3D positions (we ignore z for drawing)
-const N: usize = 900;
+const N: usize = 1000;
 const DT: f32 = 0.1;
+
+/// Projects a 3D point to 2D using a simple perspective projection.
+///
+/// `camera_distance` represents the distance from the camera to the projection plane.
+fn project_point(point: &[f32; 3], camera_distance: f32) -> (f32, f32) {
+    // Calculate a scaling factor based on the z-value.
+    let factor = camera_distance / (camera_distance - point[2]);
+    let x_proj = point[0] * factor;
+    let y_proj = point[1] * factor;
+    (x_proj, y_proj)
+}
 
 /// The typical Lenia "bell" function.
 fn bell(x: f32, m: f32, s: f32) -> f32 {
@@ -239,35 +250,45 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
         // Compute min and max energy values to normalize our color mapping.
         let min_energy = self.energies.iter().cloned().fold(f32::INFINITY, f32::min);
         let max_energy = self.energies.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-
+    
         let geometry = self.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
             // Draw background.
             frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
-
-            // Render each particle with an energy-based color.
+    
+            // Define a camera distance (or focal length)
+            let camera_distance = 400.0;
+    
+            // Render each particle.
             for (i, particle) in self.particles.rows().into_iter().enumerate() {
-                let x = (bounds.width / 2.0) + particle[0] * (bounds.width / 4.0);
-                let y = (bounds.height / 2.0) + particle[1] * (bounds.height / 4.0);
-
-                // Normalize energy value to [0, 1].
+                // Get the 3D point.
+                let point = [particle[0], particle[1], particle[2]];
+                // Project the 3D point to 2D.
+                let (proj_x, proj_y) = project_point(&point, camera_distance);
+    
+                // Transform the projected coordinates to canvas space.
+                let x = (bounds.width / 2.0) + proj_x * (bounds.width / 4.0);
+                let y = (bounds.height / 2.0) + proj_y * (bounds.height / 4.0);
+    
+                // Normalize energy for color mapping.
                 let energy_value = self.energies[i];
                 let factor = if max_energy - min_energy > 0.0 {
                     (energy_value - min_energy) / (max_energy - min_energy)
                 } else {
                     0.5
                 };
-
-                // Map factor to a color. Here, low energy gives more green,
-                // and high energy gives more red (blue is fixed).
-                let circle_color = Color::from_rgb(factor, 1.0 - factor, 0.5);
-
-                let circle = Path::circle(Point::new(x, y), 2.0);
+    
+                // Map factor to a color: adjust this to suit your depth perception.
+                let circle_color = Color::from_rgb(1.0 - factor, factor, 0.5);
+    
+                // Draw the particle as a circle.
+                let circle = Path::circle(Point::new(x, y), 10.0);
                 frame.fill(&circle, circle_color);
             }
         });
-
+    
         vec![geometry]
     }
+
 
     fn mouse_interaction(
         &self,
