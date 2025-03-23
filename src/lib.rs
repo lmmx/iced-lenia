@@ -1,6 +1,5 @@
 use iced::{
-    Application, Color, Command, Element, Event, Length, Point, Rectangle, Subscription, Theme,
-    executor,
+    Color, Element, Event, Length, Point, Rectangle, Subscription, Task, Theme,
     mouse::{Cursor, Interaction},
     widget::canvas::{self, Canvas, Frame, Geometry, Path},
 };
@@ -11,126 +10,11 @@ use std::f32::consts::PI;
 
 pub const WIDTH: f32 = 1500.0;
 pub const HEIGHT: f32 = 1500.0;
-
 const D: usize = 3; // 3D positions (we ignore z for drawing)
 const N: usize = 1000;
 const DT: f32 = 0.1;
 
-/// Projects a 3D point to 2D using a simple perspective projection.
-///
-/// `camera_distance` represents the distance from the camera to the projection plane.
-fn project_point(point: &[f32; 3], camera_distance: f32) -> (f32, f32) {
-    // Calculate a scaling factor based on the z-value.
-    let factor = camera_distance / (camera_distance - point[2]);
-    let x_proj = point[0] * factor;
-    let y_proj = point[1] * factor;
-    (x_proj, y_proj)
-}
-
-/// The typical Lenia "bell" function.
-fn bell(x: f32, m: f32, s: f32) -> f32 {
-    (-((x - m) / s).powi(2)).exp()
-}
-
-/// A simple repulsion function.
-fn repulse(x: f32) -> f32 {
-    (1.0 - x).max(0.0).powi(2)
-}
-
-/// Numerically integrates bell(r, w) * surface_area_factor * r^(D-1)
-/// over a radius interval, matching the Python reference normalization.
-fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
-    let lower = (r - 4.0 * w).max(0.0);
-    let upper = r + 4.0 * w;
-    let steps = 51;
-    let delta = (upper - lower) / (steps - 1) as f32;
-
-    let dimension_factor = match d {
-        2 => 2.0 * PI, // for 2D (circumference)
-        3 => 4.0 * PI, // for 3D (surface area)
-        _ => panic!("compute_kernel_sum: only d=2 or d=3 is implemented."),
-    };
-
-    let mut sum = 0.0;
-    let mut last_val = None;
-    for i in 0..steps {
-        let dist = lower + (i as f32) * delta;
-        let val = bell(dist, r, w) * dimension_factor * dist.powi((d - 1) as i32);
-        if let Some(prev) = last_val {
-            sum += 0.5 * (val + prev) * delta; // trapezoidal integration
-        }
-        last_val = Some(val);
-    }
-    sum
-}
-
-/// Compute the energy for one particle at position `x_i` against all others in `X`.
-fn energy(
-    #[allow(non_snake_case)] X: &Array2<f32>,
-    x_i: &Array1<f32>,
-    kernel_sum: f32,
-    r: f32,
-    w: f32,
-    m: f32,
-    s: f32,
-    c_rep: f32,
-) -> f32 {
-    let distances = (X - x_i)
-        .mapv(|v| v.powi(2))
-        .sum_axis(ndarray::Axis(1))
-        .mapv(f32::sqrt)
-        .mapv(|val| val.max(1e-10));
-
-    let u = distances.mapv(|d| bell(d, r, w)).sum() / kernel_sum;
-    let g = bell(u, m, s);
-    let r_ener = distances.mapv(repulse).sum() * c_rep / 2.0;
-    r_ener - g
-}
-
-/// Compute a numerical gradient for `x_i` using finite differences.
-fn numerical_gradient(
-    #[allow(non_snake_case)] X: &Array2<f32>,
-    xi: &Array1<f32>,
-    kernel_sum: f32,
-    r: f32,
-    w: f32,
-    m: f32,
-    s: f32,
-    c_rep: f32,
-    h: f32,
-) -> Array1<f32> {
-    let mut grad = Array1::zeros(D);
-    for dim in 0..D {
-        let mut x_plus = xi.clone();
-        x_plus[dim] += h;
-        let f_plus = energy(X, &x_plus, kernel_sum, r, w, m, s, c_rep);
-
-        let mut x_minus = xi.clone();
-        x_minus[dim] -= h;
-        let f_minus = energy(X, &x_minus, kernel_sum, r, w, m, s, c_rep);
-
-        grad[dim] = (f_plus - f_minus) / (2.0 * h);
-    }
-    grad
-}
-
-/// The main struct, including the particle positions and their energies.
-pub struct ParticleLenia {
-    particles: Array2<f32>,
-    energies: Vec<f32>,
-    cache: canvas::Cache,
-
-    // Lenia parameters
-    r: f32,
-    w: f32,
-    m: f32,
-    s: f32,
-    c_rep: f32,
-
-    kernel_sum: f32,
-    zoom: f32,
-}
-
+// Type definitions remain the same
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
@@ -138,13 +22,24 @@ pub enum Message {
     NoOp,
 }
 
-impl Application for ParticleLenia {
-    type Executor = executor::Default;
-    type Message = Message;
-    type Theme = Theme;
-    type Flags = ();
+/// The main struct, including the particle positions and their energies.
+pub struct ParticleLenia {
+    particles: Array2<f32>,
+    energies: Vec<f32>,
+    cache: canvas::Cache,
+    // Lenia parameters
+    r: f32,
+    w: f32,
+    m: f32,
+    s: f32,
+    c_rep: f32,
+    kernel_sum: f32,
+    zoom: f32,
+}
 
-    fn new(_flags: Self::Flags) -> (Self, Command<Message>) {
+impl ParticleLenia {
+    /// Create a new instance with default parameters
+    pub fn new() -> Self {
         // Lenia parameters; these may be tuned further.
         let r = 2.0;
         let w = 0.64;
@@ -157,75 +52,23 @@ impl Application for ParticleLenia {
         let particles = Array2::random((N, D), Normal::new(0.0, 1.0).unwrap());
         let energies = vec![0.0; N];
 
-        (
-            Self {
-                particles,
-                energies,
-                cache: canvas::Cache::new(),
-                r,
-                w,
-                m,
-                s,
-                c_rep,
-                kernel_sum,
-                zoom: 0.33,
-            },
-            Command::none(),
-        )
-    }
-
-    fn title(&self) -> String {
-        "Particle Lenia Simulation".into()
-    }
-
-    fn update(&mut self, message: Message) -> Command<Message> {
-        match message {
-            Message::Tick => {
-                self.step();
-                self.cache.clear();
-            }
-            Message::Zoom(delta) => {
-                // Adjust zoom factor (change multiplier as needed)
-                self.zoom += 0.01 * delta;
-                self.zoom = self.zoom.clamp(0.1, 10.0);
-                self.cache.clear();
-            }
-            Message::NoOp => {}
+        Self {
+            particles,
+            energies,
+            cache: canvas::Cache::new(),
+            r,
+            w,
+            m,
+            s,
+            c_rep,
+            kernel_sum,
+            zoom: 0.33,
         }
-        Command::none()
     }
 
-    fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch(vec![
-            iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick),
-            iced_futures::event::listen().map(|event| {
-                if let Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) = event {
-                    // Use the vertical component of the scroll to adjust zoom.
-                    let zoom_delta = match delta {
-                        iced::mouse::ScrollDelta::Lines { y, .. } => y,
-                        iced::mouse::ScrollDelta::Pixels { y, .. } => y,
-                    };
-                    Message::Zoom(zoom_delta)
-                } else {
-                    Message::NoOp
-                }
-            }),
-        ])
-    }
-
-    fn view(&self) -> Element<Message> {
-        Canvas::new(self)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-    }
-}
-
-impl ParticleLenia {
     /// Advance one simulation time step.
     fn step(&mut self) {
         let x_prev = self.particles.clone();
-
         // Copy scalar parameters so the parallel closure doesn't capture &self.
         let kernel_sum = self.kernel_sum;
         let r = self.r;
@@ -255,10 +98,67 @@ impl ParticleLenia {
                 energy(&new_positions, &xi, kernel_sum, r, w, m, s, c_rep)
             })
             .collect();
+
         self.energies = new_energies;
     }
 }
 
+// Standalone functions for application builder
+pub fn update(state: &mut ParticleLenia, message: Message) -> Task<Message> {
+    match message {
+        Message::Tick => {
+            state.step();
+            state.cache.clear();
+        }
+        Message::Zoom(delta) => {
+            // Adjust zoom factor (change multiplier as needed)
+            state.zoom += 0.01 * delta;
+            state.zoom = state.zoom.clamp(0.1, 10.0);
+            state.cache.clear();
+        }
+        Message::NoOp => {}
+    }
+
+    Task::none()
+}
+
+pub fn view(state: &ParticleLenia) -> Element<Message> {
+    Canvas::new(state)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+pub fn subscription(_state: &ParticleLenia) -> Subscription<Message> {
+    Subscription::batch(vec![
+        iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick),
+        iced_futures::event::listen().map(|event| {
+            if let Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) = event {
+                // Use the vertical component of the scroll to adjust zoom.
+                let zoom_delta = match delta {
+                    iced::mouse::ScrollDelta::Lines { y, .. } => y,
+                    iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+                };
+                Message::Zoom(zoom_delta)
+            } else {
+                Message::NoOp
+            }
+        }),
+    ])
+}
+
+// Main function using the builder pattern
+pub fn main() -> iced::Result {
+    iced::application("Particle Lenia Simulation", update, view)
+        .subscription(subscription)
+        .run_with(|| {
+            // Initialize the application state and return it with an empty task
+            let state = ParticleLenia::new();
+            (state, Task::none())
+        })
+}
+
+// The canvas::Program implementation remains the same
 impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
     type State = ();
 
@@ -291,6 +191,7 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
                 for (i, particle) in self.particles.rows().into_iter().enumerate() {
                     // Get the 3D point.
                     let point = [particle[0], particle[1], particle[2]];
+
                     // Project the 3D point to 2D.
                     let (proj_x, proj_y) = project_point(&point, camera_distance);
 
@@ -326,4 +227,108 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
     ) -> Interaction {
         Interaction::default()
     }
+}
+
+// Helper functions remain the same
+/// Projects a 3D point to 2D using a simple perspective projection.
+fn project_point(point: &[f32; 3], camera_distance: f32) -> (f32, f32) {
+    // Calculate a scaling factor based on the z-value.
+    let factor = camera_distance / (camera_distance - point[2]);
+    let x_proj = point[0] * factor;
+    let y_proj = point[1] * factor;
+    (x_proj, y_proj)
+}
+
+/// The typical Lenia "bell" function.
+fn bell(x: f32, m: f32, s: f32) -> f32 {
+    (-((x - m) / s).powi(2)).exp()
+}
+
+/// A simple repulsion function.
+fn repulse(x: f32) -> f32 {
+    (1.0 - x).max(0.0).powi(2)
+}
+
+/// Numerically integrates bell(r, w) * surface_area_factor * r^(D-1)
+/// over a radius interval, matching the Python reference normalization.
+fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
+    let lower = (r - 4.0 * w).max(0.0);
+    let upper = r + 4.0 * w;
+    let steps = 51;
+    let delta = (upper - lower) / (steps - 1) as f32;
+
+    let dimension_factor = match d {
+        2 => 2.0 * PI, // for 2D (circumference)
+        3 => 4.0 * PI, // for 3D (surface area)
+        _ => panic!("compute_kernel_sum: only d=2 or d=3 is implemented."),
+    };
+
+    let mut sum = 0.0;
+    let mut last_val = None;
+
+    for i in 0..steps {
+        let dist = lower + (i as f32) * delta;
+        let val = bell(dist, r, w) * dimension_factor * dist.powi((d - 1) as i32);
+
+        if let Some(prev) = last_val {
+            sum += 0.5 * (val + prev) * delta; // trapezoidal integration
+        }
+
+        last_val = Some(val);
+    }
+
+    sum
+}
+
+/// Compute the energy for one particle at position `x_i` against all others in `X`.
+fn energy(
+    #[allow(non_snake_case)] X: &Array2<f32>,
+    x_i: &Array1<f32>,
+    kernel_sum: f32,
+    r: f32,
+    w: f32,
+    m: f32,
+    s: f32,
+    c_rep: f32,
+) -> f32 {
+    let distances = (X - x_i)
+        .mapv(|v| v.powi(2))
+        .sum_axis(ndarray::Axis(1))
+        .mapv(f32::sqrt)
+        .mapv(|val| val.max(1e-10));
+
+    let u = distances.mapv(|d| bell(d, r, w)).sum() / kernel_sum;
+    let g = bell(u, m, s);
+    let r_ener = distances.mapv(repulse).sum() * c_rep / 2.0;
+
+    r_ener - g
+}
+
+/// Compute a numerical gradient for `x_i` using finite differences.
+fn numerical_gradient(
+    #[allow(non_snake_case)] X: &Array2<f32>,
+    xi: &Array1<f32>,
+    kernel_sum: f32,
+    r: f32,
+    w: f32,
+    m: f32,
+    s: f32,
+    c_rep: f32,
+    h: f32,
+) -> Array1<f32> {
+    let mut grad = Array1::zeros(D);
+
+    for dim in 0..D {
+        let mut x_plus = xi.clone();
+        x_plus[dim] += h;
+        let f_plus = energy(X, &x_plus, kernel_sum, r, w, m, s, c_rep);
+
+        let mut x_minus = xi.clone();
+        x_minus[dim] -= h;
+        let f_minus = energy(X, &x_minus, kernel_sum, r, w, m, s, c_rep);
+
+        grad[dim] = (f_plus - f_minus) / (2.0 * h);
+    }
+
+    grad
 }
