@@ -1,13 +1,12 @@
 use iced::{
-    executor, Application, Color, Command, Element,
-    Length, Point, Settings, Subscription,
-    Theme,
-    widget::canvas::{self, Canvas, Frame, Path, Geometry},
+    Event,
+    Application, Color, Command, Element, Length, Point, Rectangle, Settings, Size, Subscription,
+    Theme, executor,
     mouse::{Cursor, Interaction},
-    Rectangle, Size,
+    widget::canvas::{self, Canvas, Frame, Geometry, Path},
 };
 use ndarray::{Array1, Array2};
-use ndarray_rand::{rand_distr::Normal, RandomExt};
+use ndarray_rand::{RandomExt, rand_distr::Normal};
 use rayon::prelude::*;
 use std::f32::consts::PI;
 
@@ -130,11 +129,14 @@ struct ParticleLenia {
     c_rep: f32,
 
     kernel_sum: f32,
+    zoom: f32,
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     Tick,
+    Zoom(f32), // positive delta zooms in; negative zooms out
+    NoOp,
 }
 
 impl Application for ParticleLenia {
@@ -167,6 +169,7 @@ impl Application for ParticleLenia {
                 s,
                 c_rep,
                 kernel_sum,
+                zoom: 1.0,
             },
             Command::none(),
         )
@@ -182,12 +185,33 @@ impl Application for ParticleLenia {
                 self.step();
                 self.cache.clear();
             }
+            Message::Zoom(delta) => {
+                // Adjust zoom factor (change multiplier as needed)
+                self.zoom += 0.01 * delta;
+                self.zoom = self.zoom.clamp(0.5, 5.0);
+                self.cache.clear();
+            }
+            Message::NoOp => {}
         }
         Command::none()
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick)
+        Subscription::batch(vec![
+            iced::time::every(std::time::Duration::from_millis(16)).map(|_| Message::Tick),
+            iced_futures::event::listen().map(|event| {
+                if let Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) = event {
+                    // Use the vertical component of the scroll to adjust zoom.
+                    let zoom_delta = match delta {
+                        iced::mouse::ScrollDelta::Lines { y, .. } => y,
+                        iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+                    };
+                    Message::Zoom(zoom_delta)
+                } else {
+                    Message::NoOp
+                }
+            }),
+        ])
     }
 
     fn view(&self) -> Element<Message> {
@@ -249,46 +273,51 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
     ) -> Vec<Geometry> {
         // Compute min and max energy values to normalize our color mapping.
         let min_energy = self.energies.iter().cloned().fold(f32::INFINITY, f32::min);
-        let max_energy = self.energies.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    
-        let geometry = self.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
-            // Draw background.
-            frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
-    
-            // Define a camera distance (or focal length)
-            let camera_distance = 400.0;
-    
-            // Render each particle.
-            for (i, particle) in self.particles.rows().into_iter().enumerate() {
-                // Get the 3D point.
-                let point = [particle[0], particle[1], particle[2]];
-                // Project the 3D point to 2D.
-                let (proj_x, proj_y) = project_point(&point, camera_distance);
-    
-                // Transform the projected coordinates to canvas space.
-                let x = (bounds.width / 2.0) + proj_x * (bounds.width / 4.0);
-                let y = (bounds.height / 2.0) + proj_y * (bounds.height / 4.0);
-    
-                // Normalize energy for color mapping.
-                let energy_value = self.energies[i];
-                let factor = if max_energy - min_energy > 0.0 {
-                    (energy_value - min_energy) / (max_energy - min_energy)
-                } else {
-                    0.5
-                };
-    
-                // Map factor to a color: adjust this to suit your depth perception.
-                let circle_color = Color::from_rgb(1.0 - factor, factor, 0.5);
-    
-                // Draw the particle as a circle.
-                let circle = Path::circle(Point::new(x, y), 10.0);
-                frame.fill(&circle, circle_color);
-            }
-        });
-    
+        let max_energy = self
+            .energies
+            .iter()
+            .cloned()
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        let geometry = self
+            .cache
+            .draw(renderer, bounds.size(), |frame: &mut Frame| {
+                // Draw background.
+                frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
+
+                // Define a camera distance (or focal length)
+                let camera_distance = 400.0;
+
+                // Render each particle.
+                for (i, particle) in self.particles.rows().into_iter().enumerate() {
+                    // Get the 3D point.
+                    let point = [particle[0], particle[1], particle[2]];
+                    // Project the 3D point to 2D.
+                    let (proj_x, proj_y) = project_point(&point, camera_distance);
+
+                    // Transform the projected coordinates to canvas space.
+                    let x = (bounds.width / 2.0) + proj_x * (bounds.width / 4.0) * self.zoom;
+                    let y = (bounds.height / 2.0) + proj_y * (bounds.height / 4.0) * self.zoom;
+
+                    // Normalize energy for color mapping.
+                    let energy_value = self.energies[i];
+                    let factor = if max_energy - min_energy > 0.0 {
+                        (energy_value - min_energy) / (max_energy - min_energy)
+                    } else {
+                        0.5
+                    };
+
+                    // Map factor to a color: adjust this to suit your depth perception.
+                    let circle_color = Color::from_rgb(1.0 - factor, factor, 0.5);
+
+                    // Draw the particle as a circle.
+                    let circle = Path::circle(Point::new(x, y), 10.0);
+                    frame.fill(&circle, circle_color);
+                }
+            });
+
         vec![geometry]
     }
-
 
     fn mouse_interaction(
         &self,
