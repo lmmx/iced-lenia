@@ -1,4 +1,4 @@
-use iced_lenia::{update, view, subscription, HEIGHT, WIDTH};
+use iced_lenia::{HEIGHT, WIDTH, subscription, update, view};
 
 fn main() -> iced::Result {
     iced::application("Particle Lenia Simulation", update, view)

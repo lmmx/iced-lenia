@@ -1,5 +1,5 @@
 use iced::{
-    Color, Element, Event, Length, Point, Rectangle, Subscription, Theme, Task,
+    Color, Element, Event, Length, Point, Rectangle, Subscription, Task, Theme,
     mouse::{Cursor, Interaction},
     widget::canvas::{self, Canvas, Frame, Geometry, Path},
 };
@@ -47,11 +47,11 @@ impl ParticleLenia {
         let s = 0.26;
         let c_rep = 1.0;
         let kernel_sum = compute_kernel_sum(D, r, w);
-        
+
         // Initialize particles randomly.
         let particles = Array2::random((N, D), Normal::new(0.0, 1.0).unwrap());
         let energies = vec![0.0; N];
-        
+
         Self {
             particles,
             energies,
@@ -76,7 +76,7 @@ impl ParticleLenia {
         let m = self.m;
         let s = self.s;
         let c_rep = self.c_rep;
-        
+
         // Update particle positions in parallel.
         let updates: Vec<Array1<f32>> = (0..N)
             .into_par_iter()
@@ -86,10 +86,10 @@ impl ParticleLenia {
                 xi - grad * DT
             })
             .collect();
-        
+
         let new_positions = Array2::from_shape_fn((N, D), |(i, j)| updates[i][j]);
         self.particles.assign(&new_positions);
-        
+
         // Compute energies for each particle in parallel.
         let new_energies: Vec<f32> = (0..N)
             .into_par_iter()
@@ -98,7 +98,7 @@ impl ParticleLenia {
                 energy(&new_positions, &xi, kernel_sum, r, w, m, s, c_rep)
             })
             .collect();
-        
+
         self.energies = new_energies;
     }
 }
@@ -118,7 +118,7 @@ pub fn update(state: &mut ParticleLenia, message: Message) -> Task<Message> {
         }
         Message::NoOp => {}
     }
-    
+
     Task::none()
 }
 
@@ -161,7 +161,7 @@ pub fn main() -> iced::Result {
 // The canvas::Program implementation remains the same
 impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
     type State = ();
-    
+
     fn draw(
         &self,
         _state: &Self::State,
@@ -177,28 +177,28 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
             .iter()
             .cloned()
             .fold(f32::NEG_INFINITY, f32::max);
-        
+
         let geometry = self
             .cache
             .draw(renderer, bounds.size(), |frame: &mut Frame| {
                 // Draw background.
                 frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
-                
+
                 // Define a camera distance (or focal length)
                 let camera_distance = 400.0;
-                
+
                 // Render each particle.
                 for (i, particle) in self.particles.rows().into_iter().enumerate() {
                     // Get the 3D point.
                     let point = [particle[0], particle[1], particle[2]];
-                    
+
                     // Project the 3D point to 2D.
                     let (proj_x, proj_y) = project_point(&point, camera_distance);
-                    
+
                     // Transform the projected coordinates to canvas space.
                     let x = (bounds.width / 2.0) + proj_x * (bounds.width / 4.0) * self.zoom;
                     let y = (bounds.height / 2.0) + proj_y * (bounds.height / 4.0) * self.zoom;
-                    
+
                     // Normalize energy for color mapping.
                     let energy_value = self.energies[i];
                     let factor = if max_energy - min_energy > 0.0 {
@@ -206,19 +206,19 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
                     } else {
                         0.5
                     };
-                    
+
                     // Map factor to a color
                     let circle_color = Color::from_rgb(1.0 - factor, factor, 0.5);
-                    
+
                     // Draw the particle as a circle.
                     let circle = Path::circle(Point::new(x, y), 10.0);
                     frame.fill(&circle, circle_color);
                 }
             });
-        
+
         vec![geometry]
     }
-    
+
     fn mouse_interaction(
         &self,
         _state: &Self::State,
@@ -256,27 +256,27 @@ fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
     let upper = r + 4.0 * w;
     let steps = 51;
     let delta = (upper - lower) / (steps - 1) as f32;
-    
+
     let dimension_factor = match d {
         2 => 2.0 * PI, // for 2D (circumference)
         3 => 4.0 * PI, // for 3D (surface area)
         _ => panic!("compute_kernel_sum: only d=2 or d=3 is implemented."),
     };
-    
+
     let mut sum = 0.0;
     let mut last_val = None;
-    
+
     for i in 0..steps {
         let dist = lower + (i as f32) * delta;
         let val = bell(dist, r, w) * dimension_factor * dist.powi((d - 1) as i32);
-        
+
         if let Some(prev) = last_val {
             sum += 0.5 * (val + prev) * delta; // trapezoidal integration
         }
-        
+
         last_val = Some(val);
     }
-    
+
     sum
 }
 
@@ -296,11 +296,11 @@ fn energy(
         .sum_axis(ndarray::Axis(1))
         .mapv(f32::sqrt)
         .mapv(|val| val.max(1e-10));
-    
+
     let u = distances.mapv(|d| bell(d, r, w)).sum() / kernel_sum;
     let g = bell(u, m, s);
     let r_ener = distances.mapv(repulse).sum() * c_rep / 2.0;
-    
+
     r_ener - g
 }
 
@@ -317,18 +317,18 @@ fn numerical_gradient(
     h: f32,
 ) -> Array1<f32> {
     let mut grad = Array1::zeros(D);
-    
+
     for dim in 0..D {
         let mut x_plus = xi.clone();
         x_plus[dim] += h;
         let f_plus = energy(X, &x_plus, kernel_sum, r, w, m, s, c_rep);
-        
+
         let mut x_minus = xi.clone();
         x_minus[dim] -= h;
         let f_minus = energy(X, &x_minus, kernel_sum, r, w, m, s, c_rep);
-        
+
         grad[dim] = (f_plus - f_minus) / (2.0 * h);
     }
-    
+
     grad
 }
