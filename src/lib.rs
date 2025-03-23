@@ -1,7 +1,7 @@
 use iced::{
     widget::canvas::{self, Canvas, Frame, Geometry, Path},
     mouse::{Cursor, Interaction},
-    Application, Color, Command, Element, Event, Length, Point, Rectangle, Settings, Size,
+    Application, Color, Command, Element, Event, Length, Point, Rectangle,
     Subscription, Theme, executor,
 };
 use ndarray::{Array1, Array2};
@@ -9,8 +9,8 @@ use ndarray_rand::{RandomExt, rand_distr::Normal};
 use rayon::prelude::*;
 use std::f32::consts::PI;
 
-pub const WIDTH: f32 = 800.0;
-pub const HEIGHT: f32 = 800.0;
+pub const WIDTH: f32 = 1500.0;
+pub const HEIGHT: f32 = 1500.0;
 
 const D: usize = 3; // 3D positions (we ignore z for drawing)
 const N: usize = 1000;
@@ -66,6 +66,7 @@ fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
 
 /// Compute the energy for one particle at position `x_i` against all others in `X`.
 fn energy(
+    #[allow(non_snake_case)]
     X: &Array2<f32>,
     x_i: &Array1<f32>,
     kernel_sum: f32,
@@ -89,6 +90,7 @@ fn energy(
 
 /// Compute a numerical gradient for `x_i` using finite differences.
 fn numerical_gradient(
+    #[allow(non_snake_case)]
     X: &Array2<f32>,
     xi: &Array1<f32>,
     kernel_sum: f32,
@@ -168,7 +170,7 @@ impl Application for ParticleLenia {
                 s,
                 c_rep,
                 kernel_sum,
-                zoom: 1.0,
+                zoom: 0.33,
             },
             Command::none(),
         )
