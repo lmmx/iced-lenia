@@ -1,7 +1,7 @@
 use iced::{Application, Settings, Size};
 
 use iced_lenia::ParticleLenia;
-use iced_lenia::{WIDTH, HEIGHT};
+use iced_lenia::{HEIGHT, WIDTH};
 
 fn main() -> iced::Result {
     ParticleLenia::run(Settings {

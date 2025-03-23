@@ -1,8 +1,8 @@
 use iced::{
-    widget::canvas::{self, Canvas, Frame, Geometry, Path},
+    Application, Color, Command, Element, Event, Length, Point, Rectangle, Subscription, Theme,
+    executor,
     mouse::{Cursor, Interaction},
-    Application, Color, Command, Element, Event, Length, Point, Rectangle,
-    Subscription, Theme, executor,
+    widget::canvas::{self, Canvas, Frame, Geometry, Path},
 };
 use ndarray::{Array1, Array2};
 use ndarray_rand::{RandomExt, rand_distr::Normal};
@@ -46,8 +46,8 @@ fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
     let delta = (upper - lower) / (steps - 1) as f32;
 
     let dimension_factor = match d {
-        2 => 2.0 * PI,  // for 2D (circumference)
-        3 => 4.0 * PI,  // for 3D (surface area)
+        2 => 2.0 * PI, // for 2D (circumference)
+        3 => 4.0 * PI, // for 3D (surface area)
         _ => panic!("compute_kernel_sum: only d=2 or d=3 is implemented."),
     };
 
@@ -66,8 +66,7 @@ fn compute_kernel_sum(d: usize, r: f32, w: f32) -> f32 {
 
 /// Compute the energy for one particle at position `x_i` against all others in `X`.
 fn energy(
-    #[allow(non_snake_case)]
-    X: &Array2<f32>,
+    #[allow(non_snake_case)] X: &Array2<f32>,
     x_i: &Array1<f32>,
     kernel_sum: f32,
     r: f32,
@@ -90,8 +89,7 @@ fn energy(
 
 /// Compute a numerical gradient for `x_i` using finite differences.
 fn numerical_gradient(
-    #[allow(non_snake_case)]
-    X: &Array2<f32>,
+    #[allow(non_snake_case)] X: &Array2<f32>,
     xi: &Array1<f32>,
     kernel_sum: f32,
     r: f32,
