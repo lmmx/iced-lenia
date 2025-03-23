@@ -1,6 +1,6 @@
 use iced::{
-    Application, Color, Command, Element, Event, Length, Point, Rectangle, Subscription, Theme,
-    executor,
+    Application, Color, Element, Event, Length, Point, Rectangle, Subscription, Task as Command,
+    Theme, executor,
     mouse::{Cursor, Interaction},
     widget::canvas::{self, Canvas, Frame, Geometry, Path},
 };
