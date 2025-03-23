@@ -230,17 +230,27 @@ impl<Message> canvas::Program<Message, Theme> for ParticleLenia {
     ) -> Vec<Geometry> {
         let geometry = self.cache.draw(renderer, bounds.size(), |frame: &mut Frame| {
             frame.fill_rectangle(Point::ORIGIN, frame.size(), Color::BLACK);
-
-            // Just plot the x,y of each particle
+    
             for particle in self.particles.rows() {
                 let x = (bounds.width / 2.0) + particle[0] * (bounds.width / 4.0);
                 let y = (bounds.height / 2.0) + particle[1] * (bounds.height / 4.0);
-
+    
+                // Convert z into [0..1] for a quick color factor
+                let z = particle[2];
+                let factor = (z * 0.1 + 0.5).clamp(0.0, 1.0);
+    
+                // Use factor to fade between two colors
+                let circle_color = Color::from_rgb(
+                    factor,         // R
+                    1.0 - factor,   // G
+                    0.7,            // B (fixed)
+                );
+    
                 let circle = Path::circle(Point::new(x, y), 2.0);
-                frame.fill(&circle, Color::from_rgb(0.0, 1.0, 0.7));
+                frame.fill(&circle, circle_color);
             }
         });
-
+    
         vec![geometry]
     }
 
