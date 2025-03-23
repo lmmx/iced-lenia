@@ -188,7 +188,7 @@ impl Application for ParticleLenia {
             Message::Zoom(delta) => {
                 // Adjust zoom factor (change multiplier as needed)
                 self.zoom += 0.01 * delta;
-                self.zoom = self.zoom.clamp(0.5, 5.0);
+                self.zoom = self.zoom.clamp(0.1, 10.0);
                 self.cache.clear();
             }
             Message::NoOp => {}
